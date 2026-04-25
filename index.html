@@ -309,7 +309,7 @@
     </div>
 
     <script>
-        const apiKey = ""; // Kunci API disediakan secara otomatis di runtime
+        const apiKey = ""; // API Key disediakan di runtime
 
         // Helper Penyimpanan Lokal
         const storageKeys = {
@@ -348,10 +348,9 @@
                     const response = await fetch(url, options);
                     if (response.ok) return await response.json();
                     
-                    // Jangan ulangi jika kesalahan klien (kecuali rate limit 429)
                     if (response.status !== 429 && response.status < 500) {
                         const errorData = await response.json();
-                        throw new Error(errorData.error?.message || "Kesalahan Permintaan");
+                        throw new Error(errorData.error?.message || "Kesalahan API");
                     }
                 } catch (err) {
                     if (i === maxRetries - 1) throw err;
@@ -369,19 +368,19 @@
             const pertimbangan = document.getElementById('input-pertimbangan').value;
 
             if (!bahan.trim() && !pertimbangan.trim()) {
-                showToast("Berikan minimal Bahan atau Pertimbangan Hakim.");
+                showToast("Isi minimal kolom Bahan atau Pertimbangan.");
                 return;
             }
 
             btn.disabled = true;
             btn.classList.add('opacity-50', 'cursor-not-allowed');
-            btnText.innerHTML = `<div class="loading-ring mr-2"></div> MENYUSUN ARTIKEL...`;
+            btnText.innerHTML = `<div class="loading-ring mr-2"></div> MENGANALISIS DATA...`;
 
             const systemPrompt = `Anda adalah 'Don Everly Article Intelligence'. Buat artikel hukum prestisius dalam Bahasa Indonesia. Struktur: Judul Akademik dan Konten Artikel Ilmiah. Respon HARUS dalam format JSON murni: { "judul": "...", "konten": "..." }`;
-            const userQuery = `Sintesis artikel hukum dari: 
-            [DATA BAHAN]: ${bahan}
-            [PERSPEKTIF PIMPINAN]: ${pimpinan}
-            [PERTIMBANGAN HAKIM]: ${pertimbangan}`;
+            const userQuery = `Sintesis artikel hukum ilmiah dari data berikut: 
+            [BAHAN HUKUM]: ${bahan}
+            [STRATEGI PIMPINAN]: ${pimpinan}
+            [RASIO DECIDENDI]: ${pertimbangan}`;
 
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
@@ -398,6 +397,10 @@
                         }
                     })
                 });
+
+                if (!result.candidates || !result.candidates[0].content.parts[0].text) {
+                    throw new Error("Respon AI tidak valid.");
+                }
 
                 const aiResult = JSON.parse(result.candidates[0].content.parts[0].text);
                 
@@ -424,14 +427,20 @@
                     outDiv.scrollIntoView({ behavior: 'smooth' });
                 }, 150);
 
-                showToast("Naskah Berhasil Disusun!");
+                showToast("Sintesis Selesai!");
 
             } catch (error) {
-                console.error(error);
+                console.error("Error Detail:", error);
                 btn.disabled = false;
                 btn.classList.remove('opacity-50', 'cursor-not-allowed');
                 btnText.innerText = "COBA LAGI";
-                showToast("Gagal memproses data. Silakan coba lagi.");
+                
+                // Pesan khusus jika API Key bermasalah
+                if (error.message.includes("API key")) {
+                    showToast("Kesalahan Konfigurasi: Hubungkan kembali ke sistem AI.");
+                } else {
+                    showToast("Gagal memproses naskah. Periksa koneksi internet.");
+                }
             }
         }
 
@@ -468,7 +477,7 @@
         }
 
         function clearData() {
-            if (confirm("Hapus seluruh data yang sudah diketik?")) {
+            if (confirm("Hapus seluruh data input dan hasil naskah?")) {
                 Object.values(storageKeys).forEach(key => localStorage.removeItem(key));
                 document.querySelectorAll('textarea').forEach(ta => {
                     ta.value = "";
@@ -476,7 +485,7 @@
                 });
                 document.getElementById('article-output').classList.add('hidden');
                 updateWordCount();
-                showToast("Data Telah Dibersihkan");
+                showToast("Data Dibersihkan");
             }
         }
 
@@ -491,7 +500,7 @@
             el.select();
             document.execCommand('copy');
             document.body.removeChild(el);
-            showToast("Naskah Berhasil Salin");
+            showToast("Naskah Berhasil Disalin");
         }
 
         function showToast(msg) {
