@@ -309,7 +309,8 @@
     </div>
 
     <script>
-        const apiKey = ""; // API Key disediakan di runtime
+        // Gunakan variabel global jika ada, jika tidak kosongkan
+        const apiKey = typeof __api_key !== 'undefined' ? __api_key : ""; 
 
         // Helper Penyimpanan Lokal
         const storageKeys = {
@@ -330,7 +331,9 @@
             
             const activeTab = document.getElementById(tabId);
             activeTab.classList.add('active');
-            document.getElementById('link-' + tabId.replace('tab-', '')).classList.add('active');
+            const linkId = 'link-' + tabId.replace('tab-', '');
+            const targetLink = document.getElementById(linkId);
+            if(targetLink) targetLink.classList.add('active');
             
             const textareas = activeTab.querySelectorAll('textarea');
             textareas.forEach(ta => autoHeight(ta));
@@ -338,9 +341,6 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        /**
-         * Implementasi Exponential Backoff untuk memanggil Gemini API
-         */
         async function fetchWithRetry(url, options, maxRetries = 5) {
             let delay = 1000;
             for (let i = 0; i < maxRetries; i++) {
@@ -348,15 +348,20 @@
                     const response = await fetch(url, options);
                     if (response.ok) return await response.json();
                     
-                    if (response.status !== 429 && response.status < 500) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error?.message || "Kesalahan API");
+                    if (response.status === 429 || response.status >= 500) {
+                        // Rate limit atau server error, tunggu dan coba lagi
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay *= 2;
+                        continue;
                     }
+                    
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
                 } catch (err) {
                     if (i === maxRetries - 1) throw err;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
                 }
-                await new Promise(resolve => setTimeout(resolve, delay));
-                delay *= 2;
             }
         }
 
@@ -368,19 +373,27 @@
             const pertimbangan = document.getElementById('input-pertimbangan').value;
 
             if (!bahan.trim() && !pertimbangan.trim()) {
-                showToast("Isi minimal kolom Bahan atau Pertimbangan.");
+                showToast("Data bahan atau pertimbangan tidak boleh kosong!");
                 return;
             }
 
             btn.disabled = true;
             btn.classList.add('opacity-50', 'cursor-not-allowed');
-            btnText.innerHTML = `<div class="loading-ring mr-2"></div> MENGANALISIS DATA...`;
+            btnText.innerHTML = `<div class="loading-ring mr-2"></div> MENGOLAH STRUKTUR HUKUM...`;
 
-            const systemPrompt = `Anda adalah 'Don Everly Article Intelligence'. Buat artikel hukum prestisius dalam Bahasa Indonesia. Struktur: Judul Akademik dan Konten Artikel Ilmiah. Respon HARUS dalam format JSON murni: { "judul": "...", "konten": "..." }`;
-            const userQuery = `Sintesis artikel hukum ilmiah dari data berikut: 
-            [BAHAN HUKUM]: ${bahan}
-            [STRATEGI PIMPINAN]: ${pimpinan}
-            [RASIO DECIDENDI]: ${pertimbangan}`;
+            const systemPrompt = `Anda adalah ahli hukum senior dan penulis jurnal hukum internasional. Tugas: Mengonversi data input menjadi artikel hukum ilmiah yang berwibawa, elegan, dan mendalam. 
+            Format respon WAJIB JSON murni tanpa markdown code blocks:
+            {
+              "judul": "Judul Artikel yang Sangat Akademik dan Menarik",
+              "konten": "Konten lengkap artikel dalam format narasi ilmiah yang panjang dan mendalam."
+            }`;
+
+            const userQuery = `Gunakan data ini untuk menyusun artikel:
+            Bahan Hukum & Fakta: ${bahan}
+            Visi Strategis: ${pimpinan}
+            Pertimbangan Hukum (Rasio Decidendi): ${pertimbangan}
+            
+            Pastikan gaya bahasa formal, menggunakan terminologi hukum yang tepat, dan alur pemikiran yang logis.`;
 
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
@@ -393,16 +406,19 @@
                         systemInstruction: { parts: [{ text: systemPrompt }] },
                         generationConfig: { 
                             responseMimeType: "application/json",
-                            temperature: 0.7 
+                            temperature: 0.8,
+                            topP: 0.95
                         }
                     })
                 });
 
-                if (!result.candidates || !result.candidates[0].content.parts[0].text) {
-                    throw new Error("Respon AI tidak valid.");
-                }
+                let rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!rawText) throw new Error("AI mengembalikan data kosong.");
 
-                const aiResult = JSON.parse(result.candidates[0].content.parts[0].text);
+                // Pembersihan tambahan jika AI masih menyisipkan markdown block
+                rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+                
+                const aiResult = JSON.parse(rawText);
                 
                 const outDiv = document.getElementById('article-output');
                 outDiv.classList.remove('hidden');
@@ -410,11 +426,11 @@
                 const titleField = document.getElementById('art-title');
                 const contentField = document.getElementById('art-content');
                 
-                titleField.value = aiResult.judul;
-                contentField.value = aiResult.konten;
+                titleField.value = aiResult.judul || "Judul Belum Terisi";
+                contentField.value = aiResult.konten || "Konten Belum Terisi";
                 
-                localStorage.setItem(storageKeys.title, aiResult.judul);
-                localStorage.setItem(storageKeys.content, aiResult.konten);
+                localStorage.setItem(storageKeys.title, titleField.value);
+                localStorage.setItem(storageKeys.content, contentField.value);
                 
                 btn.disabled = false;
                 btn.classList.remove('opacity-50', 'cursor-not-allowed');
@@ -425,22 +441,21 @@
                     autoHeight(contentField);
                     updateWordCount();
                     outDiv.scrollIntoView({ behavior: 'smooth' });
-                }, 150);
+                }, 100);
 
-                showToast("Sintesis Selesai!");
+                showToast("Sintesis Berhasil!");
 
             } catch (error) {
-                console.error("Error Detail:", error);
+                console.error("AI Generation Error:", error);
                 btn.disabled = false;
                 btn.classList.remove('opacity-50', 'cursor-not-allowed');
-                btnText.innerText = "COBA LAGI";
+                btnText.innerText = "ULANGI PROSES";
                 
-                // Pesan khusus jika API Key bermasalah
-                if (error.message.includes("API key")) {
-                    showToast("Kesalahan Konfigurasi: Hubungkan kembali ke sistem AI.");
-                } else {
-                    showToast("Gagal memproses naskah. Periksa koneksi internet.");
-                }
+                let errorMsg = "Gagal memproses data.";
+                if (error.message.includes("API key")) errorMsg = "Kunci API tidak valid atau hilang.";
+                else if (error.message.includes("JSON")) errorMsg = "Gagal membaca format data AI.";
+                
+                showToast(errorMsg);
             }
         }
 
@@ -462,8 +477,9 @@
         }
 
         function autoHeight(element) {
+            if(!element) return;
             element.style.height = "auto";
-            element.style.height = (element.scrollHeight) + "px";
+            element.style.height = (element.scrollHeight + 5) + "px";
         }
 
         function updateWordCount() {
@@ -471,13 +487,17 @@
             let total = 0;
             textareas.forEach(ta => {
                 const text = ta.value.trim();
-                if (text) total += text.split(/\s+/).filter(word => word.length > 0).length;
+                if (text) {
+                    const words = text.split(/\s+/).filter(word => word.length > 0);
+                    total += words.length;
+                }
             });
-            document.getElementById('word-count').innerText = total + " KATA";
+            const wcDisplay = document.getElementById('word-count');
+            if(wcDisplay) wcDisplay.innerText = total + " KATA";
         }
 
         function clearData() {
-            if (confirm("Hapus seluruh data input dan hasil naskah?")) {
+            if (confirm("Apakah Anda yakin ingin menghapus semua data?")) {
                 Object.values(storageKeys).forEach(key => localStorage.removeItem(key));
                 document.querySelectorAll('textarea').forEach(ta => {
                     ta.value = "";
@@ -485,7 +505,7 @@
                 });
                 document.getElementById('article-output').classList.add('hidden');
                 updateWordCount();
-                showToast("Data Dibersihkan");
+                showToast("Data telah dibersihkan");
             }
         }
 
@@ -494,27 +514,36 @@
             const content = document.getElementById('art-content').value;
             const fullText = `${title}\n\n${content}`;
             
+            // Fallback copy mechanism
             const el = document.createElement('textarea');
             el.value = fullText;
+            el.setAttribute('readonly', '');
+            el.style.position = 'absolute';
+            el.style.left = '-9999px';
             document.body.appendChild(el);
             el.select();
             document.execCommand('copy');
             document.body.removeChild(el);
-            showToast("Naskah Berhasil Disalin");
+            showToast("Naskah disalin ke clipboard");
         }
 
         function showToast(msg) {
             const toast = document.getElementById('toast');
-            document.getElementById('toast-msg').innerText = msg;
-            toast.classList.remove('opacity-0');
-            toast.classList.add('translate-y-[-20px]');
+            const msgEl = document.getElementById('toast-msg');
+            if(!toast || !msgEl) return;
+            
+            msgEl.innerText = msg;
+            toast.classList.remove('opacity-0', 'pointer-events-none');
+            toast.classList.add('opacity-100', 'translate-y-[-10px]');
+            
             setTimeout(() => {
-                toast.classList.add('opacity-0');
-                toast.classList.remove('translate-y-[-20px]');
-            }, 3000);
+                toast.classList.add('opacity-0', 'pointer-events-none');
+                toast.classList.remove('opacity-100', 'translate-y-[-10px]');
+            }, 4000);
         }
 
         window.onload = () => {
+            // Load saved data
             document.getElementById('input-bahan').value = localStorage.getItem(storageKeys.bahan) || "";
             document.getElementById('input-pimpinan').value = localStorage.getItem(storageKeys.pimpinan) || "";
             document.getElementById('input-pertimbangan').value = localStorage.getItem(storageKeys.pertimbangan) || "";
@@ -528,10 +557,11 @@
                 document.getElementById('art-content').value = savedContent || "";
             }
 
-            document.querySelectorAll('textarea').forEach(ta => {
-                autoHeight(ta);
-            });
-            updateWordCount();
+            // Inisialisasi tampilan
+            setTimeout(() => {
+                document.querySelectorAll('textarea').forEach(ta => autoHeight(ta));
+                updateWordCount();
+            }, 100);
         };
     </script>
 </body>
